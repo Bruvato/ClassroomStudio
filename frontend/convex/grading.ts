@@ -9,6 +9,7 @@
 
 import { v } from "convex/values";
 import {
+  action,
   httpAction,
   internalAction,
   internalMutation,
@@ -129,24 +130,40 @@ export const triggerGradingInternal = internalAction({
   handler: async (ctx, args) => {
     const { submissionId } = args;
 
+    console.log(
+      `🔧 [DEBUG] triggerGradingInternal called for submission ${submissionId}`
+    );
+
     try {
+      console.log(`🔧 [DEBUG] Getting submission details...`);
       // Get submission details
       const submission = await ctx.runQuery(api.submissions.getSubmission, {
         submissionId,
       });
 
       if (!submission) {
+        console.log(`🔧 [DEBUG] Submission not found: ${submissionId}`);
         throw new Error("Submission not found");
       }
+
+      console.log(`🔧 [DEBUG] Found submission:`, {
+        id: submission._id,
+        status: submission.status,
+      });
 
       // Get assignment and get solution file info
       const assignment = submission.assignment;
       if (!assignment) {
         console.log(
-          `No assignment found for submission ${submissionId}, skipping AI grading`
+          `🔧 [DEBUG] No assignment found for submission ${submissionId}, skipping AI grading`
         );
         return;
       }
+
+      console.log(`🔧 [DEBUG] Found assignment:`, {
+        id: assignment._id,
+        title: assignment.title,
+      });
 
       // Check if assignment has a solution file
       const assignmentData = await ctx.runQuery(api.assignments.getAssignment, {
@@ -155,12 +172,17 @@ export const triggerGradingInternal = internalAction({
 
       if (!assignmentData || !assignmentData.solutionFileId) {
         console.log(
-          `No solution file for assignment ${assignment._id}, skipping AI grading`
+          `🔧 [DEBUG] No solution file for assignment ${assignment._id}, skipping AI grading`
         );
         return;
       }
 
+      console.log(`🔧 [DEBUG] Assignment has solution file:`, {
+        solutionFileId: assignmentData.solutionFileId,
+      });
+
       // Get file URLs for both submission and solution
+      console.log(`🔧 [DEBUG] Getting file URLs...`);
       const submissionFileUrl = await ctx.runQuery(
         api.submissions.getSubmissionFileUrl,
         {
@@ -172,15 +194,22 @@ export const triggerGradingInternal = internalAction({
         fileMetadataId: assignmentData.solutionFileId,
       });
 
+      console.log(`🔧 [DEBUG] File URLs retrieved:`, {
+        submissionUrl: submissionFileUrl.url ? "✓" : "✗",
+        solutionUrl: solutionFileUrl.url ? "✓" : "✗",
+      });
+
       // Check that URLs are available
       if (!submissionFileUrl.url || !solutionFileUrl.url) {
         throw new Error("Could not generate file URLs");
       }
 
       // Mark submission as analyzing
+      console.log(`🔧 [DEBUG] Marking submission as analyzing...`);
       await ctx.runMutation(api.submissions.markAsAnalyzing, { submissionId });
 
       // Call backend grading
+      console.log(`🔧 [DEBUG] Calling backend grading action...`);
       await ctx.runAction(internal.grading.callBackendGrading, {
         submissionId,
         studentPdfUrl: submissionFileUrl.url,
@@ -193,15 +222,40 @@ export const triggerGradingInternal = internalAction({
         },
       });
 
-      console.log(`AI grading triggered for submission ${submissionId}`);
+      console.log(
+        `🔧 [DEBUG] ✅ AI grading triggered for submission ${submissionId}`
+      );
+
+      // Return success result
+      return {
+        success: true,
+        message: "Internal grading action completed",
+        submissionId: submissionId,
+      };
     } catch (error) {
-      console.error("Error in triggerGradingInternal:", error);
+      console.error(
+        `🔧 [DEBUG] ❌ Error in triggerGradingInternal for submission ${submissionId}:`,
+        error
+      );
+      console.error(`🔧 [DEBUG] Error details:`, {
+        message: error instanceof Error ? error.message : "Unknown error",
+        stack: error instanceof Error ? error.stack : undefined,
+        error,
+      });
 
       // Mark as analyzed (failed)
       await ctx.runMutation(internal.grading.handleGradingError, {
         submissionId,
         error: error instanceof Error ? error.message : "Unknown error",
       });
+
+      // Return error result
+      return {
+        success: false,
+        message: "Internal grading action failed",
+        error: error instanceof Error ? error.message : "Unknown error",
+        submissionId: submissionId,
+      };
     }
   },
 });
@@ -225,15 +279,31 @@ export const callBackendGrading = internalAction({
     const { submissionId, studentPdfUrl, solutionPdfUrl, assignmentContext } =
       args;
 
+    console.log(
+      `🚀 [DEBUG] callBackendGrading called for submission ${submissionId}`
+    );
+
     // Backend URL - make this configurable
     const backendUrl =
       process.env.GRADING_BACKEND_URL || "http://localhost:8000";
+
+    console.log(`🚀 [DEBUG] Backend URL: ${backendUrl}`);
+    console.log(
+      `🚀 [DEBUG] GRADING_BACKEND_URL env var:`,
+      process.env.GRADING_BACKEND_URL
+    );
 
     // Webhook URL for backend to call back with results
     const convexSiteUrl = process.env.CONVEX_SITE_URL;
     const webhookUrl = convexSiteUrl
       ? `${convexSiteUrl}/grading/webhook`
       : "http://localhost:3000/api/grading/webhook"; // Fallback for dev
+
+    console.log(`🚀 [DEBUG] Webhook URL: ${webhookUrl}`);
+    console.log(
+      `🚀 [DEBUG] CONVEX_SITE_URL env var:`,
+      process.env.CONVEX_SITE_URL
+    );
 
     const requestBody = {
       submission_id: submissionId,
@@ -244,14 +314,21 @@ export const callBackendGrading = internalAction({
       webhook_url: webhookUrl,
     };
 
-    console.log(`🚀 Calling backend API for submission ${submissionId}:`, {
-      backendUrl,
-      endpoint: "/api/grading/grade-submission",
-      submissionId,
-      webhookUrl,
-    });
+    console.log(
+      `🚀 [DEBUG] Calling backend API for submission ${submissionId}:`,
+      {
+        backendUrl,
+        endpoint: "/api/grading/grade-submission",
+        submissionId,
+        webhookUrl,
+        requestBody,
+      }
+    );
 
     try {
+      console.log(
+        `🚀 [DEBUG] Making fetch request to: ${backendUrl}/api/grading/grade-submission`
+      );
       const response = await fetch(
         `${backendUrl}/api/grading/grade-submission`,
         {
@@ -471,9 +548,31 @@ export const getAssignmentAnalyses = query({
 });
 
 /**
- * Mutation: Manually trigger grading for a submission (for testing)
+ * Internal Action: Simple test to verify internal action logging
  */
-export const manualTriggerGrading = mutation({
+export const testInternalAction = internalAction({
+  args: { submissionId: v.id("submissions") },
+  handler: async (ctx, args) => {
+    console.log(
+      `🧪 [TEST] Internal action called for submission ${args.submissionId}`
+    );
+    console.log(
+      `🧪 [TEST] This should appear in logs if internal actions log properly`
+    );
+
+    return {
+      success: true,
+      message: "Test internal action completed",
+      submissionId: args.submissionId,
+    };
+  },
+});
+
+/**
+ * Action: Manually trigger grading for a submission (for testing)
+ * Using action instead of mutation to call internal action directly
+ */
+export const manualTriggerGrading = action({
   args: { submissionId: v.id("submissions") },
   handler: async (ctx, args) => {
     console.log(
@@ -481,18 +580,37 @@ export const manualTriggerGrading = mutation({
     );
 
     try {
-      // Directly call the internal grading function
-      await ctx.scheduler.runAfter(0, internal.grading.triggerGradingInternal, {
-        submissionId: args.submissionId,
-      });
+      // First test if internal actions log properly
+      console.log(`🔧 [DEBUG] Testing internal action logging...`);
+      const testResult = await ctx.runAction(
+        internal.grading.testInternalAction,
+        {
+          submissionId: args.submissionId,
+        }
+      );
+      console.log(`🔧 [DEBUG] testInternalAction returned:`, testResult);
 
       console.log(
-        `✅ Manual grading trigger scheduled for submission ${args.submissionId}`
+        `🔧 [DEBUG] About to call triggerGradingInternal for submission ${args.submissionId}...`
+      );
+
+      // Call the internal grading function directly (no scheduler)
+      const result = await ctx.runAction(
+        internal.grading.triggerGradingInternal,
+        {
+          submissionId: args.submissionId,
+        }
+      );
+
+      console.log(`🔧 [DEBUG] triggerGradingInternal returned:`, result);
+
+      console.log(
+        `✅ Manual grading trigger completed for submission ${args.submissionId}`
       );
 
       return {
         success: true,
-        message: "Grading trigger scheduled",
+        message: "Grading trigger completed",
         submissionId: args.submissionId,
       };
     } catch (error) {

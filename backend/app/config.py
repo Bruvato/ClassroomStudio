@@ -23,8 +23,9 @@ class Settings(BaseSettings):
     # CORS settings
     cors_origins: list = [
         "http://localhost:3000",  # Next.js dev
-        "https://*.convex.dev",   # Convex
+        "https://*.convex.dev",   # Convex (wildcard doesn't work well, using * below)
         "https://*.vercel.app",   # Vercel deployment
+        "*"  # Allow all origins for development - more restrictive in production
     ]
     
     # Processing limits

@@ -21,7 +21,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useMutation } from "convex/react";
+import { useAction } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 
@@ -94,13 +94,17 @@ export function GradingStatus({
   className,
 }: GradingStatusProps) {
   const [isTriggering, setIsTriggering] = useState(false);
-  const triggerGrading = useMutation(api.grading.manualTriggerGrading);
+  const triggerGrading = useAction(api.grading.manualTriggerGrading);
 
   const config = statusConfig[status];
   const Icon = config.icon;
   const isAnalyzing = status === "analyzing";
 
   const handleTriggerGrading = async () => {
+    console.log("🔴 [DEBUG] Trigger Analysis button clicked!");
+    console.log("🔴 [DEBUG] submissionId:", submissionId);
+    console.log("🔴 [DEBUG] hasSolutionFile:", hasSolutionFile);
+
     if (!hasSolutionFile) {
       alert("No solution file available for this assignment");
       return;
@@ -108,9 +112,11 @@ export function GradingStatus({
 
     setIsTriggering(true);
     try {
-      await triggerGrading({ submissionId });
+      console.log("🔴 [DEBUG] Calling triggerGrading action...");
+      const result = await triggerGrading({ submissionId });
+      console.log("🔴 [DEBUG] triggerGrading result:", result);
     } catch (error) {
-      console.error("Failed to trigger grading:", error);
+      console.error("🔴 [DEBUG] Failed to trigger grading:", error);
       alert("Failed to trigger grading. Please try again.");
     } finally {
       setIsTriggering(false);
@@ -181,7 +187,7 @@ export function GradingStatus({
               hasSolutionFile && (
                 <div className="flex items-center gap-2 pt-2 border-t">
                   <Button
-                    variant="outline"
+                    variant="neutral"
                     size="sm"
                     onClick={handleTriggerGrading}
                     disabled={isTriggering || isAnalyzing}

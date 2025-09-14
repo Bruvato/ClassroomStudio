@@ -1,7 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
@@ -46,14 +46,22 @@ app = FastAPI(
 # Get settings
 settings = get_settings()
 
-# Add CORS middleware
+# Add CORS middleware - permissive for development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=False,  # Set to False when using allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"🔍 {request.method} {request.url.path} - From: {request.client.host if request.client else 'unknown'}")
+    response = await call_next(request)
+    logger.info(f"📤 {request.method} {request.url.path} - Status: {response.status_code}")
+    return response
 
 # Include API routes
 app.include_router(grading_router, prefix="/api")
@@ -68,7 +76,8 @@ async def root():
         "version": "1.0.0",
         "endpoints": {
             "grading": "/api/grading",
-            "health": "/api/grading/health",
+            "health": "/health",
+            "detailed_health": "/api/grading/health",
             "docs": "/docs"
         }
     }
@@ -76,8 +85,10 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """Simple health check endpoint."""
+    """Simple health check endpoint - logs requests for debugging."""
+    logger.info("🔍 Health check endpoint hit!")
     return {
         "status": "healthy",
-        "service": "grading-backend"
+        "service": "grading-backend",
+        "timestamp": "2025-09-14T09:24:14.154281"
     }
