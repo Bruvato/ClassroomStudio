@@ -13,6 +13,9 @@ import { Separator } from "@/components/ui/separator";
 import { FileDisplay } from "@/components/ui/file-display";
 import { EditAssignmentModal } from "@/components/classroom/EditAssignmentModal";
 import { SubmissionModal } from "@/components/classroom/SubmissionModal";
+import { GradingResults } from "@/components/grading/GradingResults";
+import { GradingStatus } from "@/components/grading/GradingStatus";
+import { GradingAnalytics } from "@/components/grading/GradingAnalytics";
 import {
   Calendar,
   Clock,
@@ -28,7 +31,8 @@ import {
   Upload,
   MessageSquare,
   GraduationCap,
-  Eye
+  Eye,
+  Brain,
 } from "lucide-react";
 import { formatDistanceToNow, format, isAfter } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -44,7 +48,9 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
   const resolvedParams = use(params);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [submissionModalOpen, setSubmissionModalOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"instructions" | "submissions" | "grades">("instructions");
+  const [activeTab, setActiveTab] = useState<
+    "instructions" | "submissions" | "grades" | "grading"
+  >("instructions");
 
   const classroomId = resolvedParams.id as Id<"classrooms">;
   const assignmentId = resolvedParams.assignmentId as Id<"assignments">;
@@ -68,12 +74,12 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
     api.files.getFileMetadata,
     !isAuthenticated || !assignment?.solutionFileId
       ? "skip"
-      : { fileId: assignment.solutionFileId }
+      : { fileMetadataId: assignment.solutionFileId }
   );
 
   const submissions = useQuery(
     api.assignments.getAssignmentSubmissions,
-    !isAuthenticated || !assignment || (classroom?.userRole === "student")
+    !isAuthenticated || !assignment || classroom?.userRole === "student"
       ? "skip"
       : { assignmentId }
   );
@@ -85,17 +91,38 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
       : { assignmentId }
   );
 
+  // AI Grading queries - must be before early return to maintain hook order
+  const myAnalysis = useQuery(
+    api.grading.getSubmissionAnalysis,
+    !isAuthenticated || !mySubmission
+      ? "skip"
+      : { submissionId: mySubmission._id }
+  );
+
+  const gradingStats = useQuery(
+    api.grading.getGradingStats,
+    !isAuthenticated ||
+      !assignment ||
+      (classroom?.userRole !== "instructor" && classroom?.userRole !== "ta")
+      ? "skip"
+      : { assignmentId }
+  );
+
   if (!classroom || !assignment) {
     return <Loading message="Loading assignment..." size="lg" showCard />;
   }
 
-  const isTeacher = classroom.userRole === "instructor" || classroom.userRole === "ta";
+  const isTeacher =
+    classroom.userRole === "instructor" || classroom.userRole === "ta";
   const hasValidDueDate = assignment.dueDate && assignment.dueDate !== 0; // Any valid timestamp
-  const isOverdue = hasValidDueDate ? isAfter(new Date(), new Date(assignment.dueDate)) : false;
+  const isOverdue = hasValidDueDate
+    ? isAfter(new Date(), new Date(assignment.dueDate))
+    : false;
   const isDraft = !assignment.isPublished;
   const totalStudents = memberStats?.students || 0;
   const submissionCount = assignment.totalSubmissions || 0;
-  const submissionRate = totalStudents > 0 ? submissionCount / totalStudents : 0;
+  const submissionRate =
+    totalStudents > 0 ? submissionCount / totalStudents : 0;
 
   const getStatusInfo = () => {
     if (isDraft) {
@@ -103,7 +130,7 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
         icon: Edit,
         text: "Draft",
         color: "text-amber-600",
-        bgColor: "bg-amber-50 border-amber-200"
+        bgColor: "bg-amber-50 border-amber-200",
       };
     }
 
@@ -112,21 +139,21 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
         icon: CheckCircle2,
         text: "All Submitted",
         color: "text-green-600",
-        bgColor: "bg-green-50 border-green-200"
+        bgColor: "bg-green-50 border-green-200",
       };
     } else if (isOverdue) {
       return {
         icon: AlertCircle,
         text: "Overdue",
         color: "text-red-600",
-        bgColor: "bg-red-50 border-red-200"
+        bgColor: "bg-red-50 border-red-200",
       };
     } else {
       return {
         icon: Clock,
         text: "Active",
         color: "text-blue-600",
-        bgColor: "bg-blue-50 border-blue-200"
+        bgColor: "bg-blue-50 border-blue-200",
       };
     }
   };
@@ -142,10 +169,14 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
     ? [
         { id: "instructions" as const, label: "Instructions", icon: BookOpen },
         { id: "submissions" as const, label: "Submissions", icon: Upload },
-        { id: "grades" as const, label: "Grades", icon: GraduationCap }
+        { id: "grading" as const, label: "AI Grading", icon: Brain },
+        { id: "grades" as const, label: "Grades", icon: GraduationCap },
       ]
     : [
-        { id: "instructions" as const, label: "Instructions", icon: BookOpen }
+        { id: "instructions" as const, label: "Instructions", icon: BookOpen },
+        ...(mySubmission
+          ? [{ id: "grading" as const, label: "AI Grading", icon: Brain }]
+          : []),
       ];
 
   return (
@@ -204,7 +235,11 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
                           <>
                             <span>•</span>
                             <span className={cn(isOverdue && "text-red-600")}>
-                              Due {format(new Date(assignment.dueDate), "MMM d, yyyy 'at' h:mm a")}
+                              Due{" "}
+                              {format(
+                                new Date(assignment.dueDate),
+                                "MMM d, yyyy 'at' h:mm a"
+                              )}
                             </span>
                           </>
                         )}
@@ -214,7 +249,11 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
 
                   <Badge
                     variant="outline"
-                    className={cn("px-4 py-2 text-sm font-medium", statusInfo.bgColor, statusInfo.color)}
+                    className={cn(
+                      "px-4 py-2 text-sm font-medium",
+                      statusInfo.bgColor,
+                      statusInfo.color
+                    )}
                   >
                     <StatusIcon size={16} className="mr-2" />
                     {statusInfo.text}
@@ -249,7 +288,10 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
                       <Icon size={16} />
                       {tab.label}
                       {tab.id === "submissions" && isTeacher && (
-                        <Badge variant="outline" className="ml-1 font-mono text-xs">
+                        <Badge
+                          variant="outline"
+                          className="ml-1 font-mono text-xs"
+                        >
                           {submissionCount}
                         </Badge>
                       )}
@@ -289,52 +331,60 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
                           Solution File
                         </h3>
                         <FileDisplay
-                          file={{
-                            id: solutionFile._id,
-                            name: solutionFile.fileName,
-                            size: solutionFile.sizeBytes,
-                            type: solutionFile.mimeType,
-                            uploadedAt: solutionFile.uploadedAt
-                          }}
-                          showActions={true}
+                          fileMetadataId={solutionFile._id}
+                          showDownload={true}
+                          showDelete={false}
                         />
                       </CardContent>
                     </Card>
                   )}
 
                   {/* Grading Rubric */}
-                  {assignment.rubric && assignment.rubric.criteria.length > 0 && (
-                    <Card>
-                      <CardContent className="p-6">
-                        <h3 className="text-lg font-heading text-foreground mb-4 flex items-center gap-2">
-                          <CheckCircle2 size={20} />
-                          Grading Rubric
-                        </h3>
-                        <div className="space-y-4">
-                          {assignment.rubric.criteria.map((criterion, index) => (
-                            <div key={index} className="border border-border rounded-base p-4 bg-secondary-background">
-                              <div className="flex items-center justify-between mb-2">
-                                <h4 className="font-medium text-foreground">
-                                  {criterion.name}
-                                </h4>
-                                <Badge variant="outline" className="font-mono">
-                                  {criterion.points} pts
-                                </Badge>
-                              </div>
-                              <p className="text-sm text-foreground/80">
-                                {criterion.description}
-                              </p>
+                  {assignment.rubric &&
+                    assignment.rubric.criteria.length > 0 && (
+                      <Card>
+                        <CardContent className="p-6">
+                          <h3 className="text-lg font-heading text-foreground mb-4 flex items-center gap-2">
+                            <CheckCircle2 size={20} />
+                            Grading Rubric
+                          </h3>
+                          <div className="space-y-4">
+                            {assignment.rubric.criteria.map(
+                              (criterion, index) => (
+                                <div
+                                  key={index}
+                                  className="border border-border rounded-base p-4 bg-secondary-background"
+                                >
+                                  <div className="flex items-center justify-between mb-2">
+                                    <h4 className="font-medium text-foreground">
+                                      {criterion.name}
+                                    </h4>
+                                    <Badge
+                                      variant="outline"
+                                      className="font-mono"
+                                    >
+                                      {criterion.points} pts
+                                    </Badge>
+                                  </div>
+                                  <p className="text-sm text-foreground/80">
+                                    {criterion.description}
+                                  </p>
+                                </div>
+                              )
+                            )}
+                            <Separator />
+                            <div className="flex justify-between items-center font-medium">
+                              <span className="text-foreground/70">
+                                Total Points:
+                              </span>
+                              <span className="text-foreground text-lg">
+                                {assignment.totalPoints} pts
+                              </span>
                             </div>
-                          ))}
-                          <Separator />
-                          <div className="flex justify-between items-center font-medium">
-                            <span className="text-foreground/70">Total Points:</span>
-                            <span className="text-foreground text-lg">{assignment.totalPoints} pts</span>
                           </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
+                        </CardContent>
+                      </Card>
+                    )}
                 </div>
               )}
 
@@ -349,7 +399,10 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
                       <Loading message="Loading submissions..." />
                     ) : submissions.length === 0 ? (
                       <div className="text-center py-8">
-                        <Upload size={48} className="text-foreground/40 mx-auto mb-4" />
+                        <Upload
+                          size={48}
+                          className="text-foreground/40 mx-auto mb-4"
+                        />
                         <p className="text-foreground/80">No submissions yet</p>
                       </div>
                     ) : (
@@ -367,10 +420,15 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
                               </div>
                               <div>
                                 <p className="font-medium text-foreground">
-                                  {submission.student?.name || "Unknown Student"}
+                                  {submission.student?.name ||
+                                    "Unknown Student"}
                                 </p>
                                 <p className="text-sm text-foreground/60">
-                                  {submission.fileName} • {format(new Date(submission.submittedAt), "MMM d, h:mm a")}
+                                  {submission.fileName} •{" "}
+                                  {format(
+                                    new Date(submission.submittedAt),
+                                    "MMM d, h:mm a"
+                                  )}
                                 </p>
                               </div>
                             </div>
@@ -378,8 +436,10 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
                               <Badge
                                 variant="outline"
                                 className={cn(
-                                  submission.status === "graded" && "bg-green-50 text-green-600 border-green-200",
-                                  submission.status === "submitted" && "bg-blue-50 text-blue-600 border-blue-200"
+                                  submission.status === "graded" &&
+                                    "bg-green-50 text-green-600 border-green-200",
+                                  submission.status === "submitted" &&
+                                    "bg-blue-50 text-blue-600 border-blue-200"
                                 )}
                               >
                                 {submission.status}
@@ -397,6 +457,57 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
                 </Card>
               )}
 
+              {activeTab === "grading" && (
+                <div className="space-y-6">
+                  {/* Teacher View: Class Analytics */}
+                  {isTeacher && (
+                    <GradingAnalytics
+                      stats={gradingStats}
+                      totalStudents={totalStudents}
+                    />
+                  )}
+
+                  {/* Student View: Individual Grading Status and Results */}
+                  {!isTeacher && mySubmission && (
+                    <>
+                      <GradingStatus
+                        submissionId={mySubmission._id}
+                        status={mySubmission.status}
+                        hasAnalysis={!!myAnalysis}
+                        hasSolutionFile={!!assignment.solutionFileId}
+                        isTeacherView={false}
+                      />
+
+                      {myAnalysis && (
+                        <GradingResults
+                          analysis={myAnalysis}
+                          isTeacherView={false}
+                        />
+                      )}
+                    </>
+                  )}
+
+                  {/* No submission yet */}
+                  {!isTeacher && !mySubmission && (
+                    <Card className="border-2 border-dashed">
+                      <CardContent className="p-8 text-center">
+                        <Brain className="w-12 h-12 text-foreground/30 mx-auto mb-4" />
+                        <h3 className="text-lg font-semibold mb-2">
+                          No Submission Yet
+                        </h3>
+                        <p className="text-foreground/60 mb-4">
+                          Submit your assignment to see AI grading and feedback.
+                        </p>
+                        <Button onClick={() => setSubmissionModalOpen(true)}>
+                          <Upload className="w-4 h-4 mr-2" />
+                          Submit Assignment
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              )}
+
               {activeTab === "grades" && isTeacher && (
                 <Card>
                   <CardContent className="p-6">
@@ -405,8 +516,13 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
                       Grade Summary
                     </h3>
                     <div className="text-center py-8">
-                      <GraduationCap size={48} className="text-foreground/40 mx-auto mb-4" />
-                      <p className="text-foreground/80">Grade summary coming soon</p>
+                      <GraduationCap
+                        size={48}
+                        className="text-foreground/40 mx-auto mb-4"
+                      />
+                      <p className="text-foreground/80">
+                        Grade summary coming soon
+                      </p>
                     </div>
                   </CardContent>
                 </Card>
@@ -425,21 +541,35 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
                   </h3>
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-foreground/70">Total Students</span>
-                      <span className="font-medium text-foreground">{totalStudents}</span>
+                      <span className="text-sm text-foreground/70">
+                        Total Students
+                      </span>
+                      <span className="font-medium text-foreground">
+                        {totalStudents}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-foreground/70">Submissions</span>
-                      <span className="font-medium text-foreground">{submissionCount}</span>
+                      <span className="text-sm text-foreground/70">
+                        Submissions
+                      </span>
+                      <span className="font-medium text-foreground">
+                        {submissionCount}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-foreground/70">Submission Rate</span>
-                      <span className="font-medium text-foreground">{Math.round(submissionRate * 100)}%</span>
+                      <span className="text-sm text-foreground/70">
+                        Submission Rate
+                      </span>
+                      <span className="font-medium text-foreground">
+                        {Math.round(submissionRate * 100)}%
+                      </span>
                     </div>
                     <Separator />
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-foreground/70">Points</span>
-                      <span className="font-medium text-foreground">{assignment.totalPoints}</span>
+                      <span className="font-medium text-foreground">
+                        {assignment.totalPoints}
+                      </span>
                     </div>
                   </div>
                 </CardContent>
@@ -451,24 +581,32 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
               <CardContent className="p-6">
                 <div className="flex items-center gap-3 mb-4">
                   <Calendar size={20} className="text-foreground/60" />
-                  <h3 className="text-lg font-heading text-foreground">Due Date</h3>
+                  <h3 className="text-lg font-heading text-foreground">
+                    Due Date
+                  </h3>
                 </div>
                 {hasValidDueDate ? (
                   <div>
-                    <p className={cn(
-                      "text-lg font-medium mb-1",
-                      isOverdue ? "text-red-600" : "text-foreground"
-                    )}>
+                    <p
+                      className={cn(
+                        "text-lg font-medium mb-1",
+                        isOverdue ? "text-red-600" : "text-foreground"
+                      )}
+                    >
                       {format(new Date(assignment.dueDate), "EEEE, MMM d")}
                     </p>
-                    <p className={cn(
-                      "text-sm mb-2",
-                      isOverdue ? "text-red-600" : "text-foreground/70"
-                    )}>
+                    <p
+                      className={cn(
+                        "text-sm mb-2",
+                        isOverdue ? "text-red-600" : "text-foreground/70"
+                      )}
+                    >
                       {format(new Date(assignment.dueDate), "h:mm a")}
                     </p>
                     <p className="text-xs text-foreground/60">
-                      {formatDistanceToNow(new Date(assignment.dueDate), { addSuffix: true })}
+                      {formatDistanceToNow(new Date(assignment.dueDate), {
+                        addSuffix: true,
+                      })}
                     </p>
                   </div>
                 ) : (
@@ -481,31 +619,48 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
             {!isTeacher && (
               <Card>
                 <CardContent className="p-6">
-                  <h3 className="text-lg font-heading text-foreground mb-4">Your Work</h3>
+                  <h3 className="text-lg font-heading text-foreground mb-4">
+                    Your Work
+                  </h3>
                   <div className="space-y-3">
                     {mySubmission ? (
                       <div className="space-y-3">
                         <div className="flex items-center justify-between p-3 bg-secondary-background rounded-base border-2 border-border">
                           <div className="flex items-center gap-3">
-                            <div className={cn(
-                              "w-8 h-8 rounded-base flex items-center justify-center",
-                              mySubmission.status === "submitted" ? "bg-main text-main-foreground" :
-                              mySubmission.status === "graded" ? "bg-green-600 text-white" :
-                              "bg-secondary text-foreground/60"
-                            )}>
-                              {mySubmission.status === "submitted" ? <CheckCircle2 size={16} /> :
-                               mySubmission.status === "graded" ? <Trophy size={16} /> :
-                               <FileText size={16} />}
+                            <div
+                              className={cn(
+                                "w-8 h-8 rounded-base flex items-center justify-center",
+                                mySubmission.status === "submitted"
+                                  ? "bg-main text-main-foreground"
+                                  : mySubmission.status === "graded"
+                                  ? "bg-green-600 text-white"
+                                  : "bg-secondary text-foreground/60"
+                              )}
+                            >
+                              {mySubmission.status === "submitted" ? (
+                                <CheckCircle2 size={16} />
+                              ) : mySubmission.status === "graded" ? (
+                                <Trophy size={16} />
+                              ) : (
+                                <FileText size={16} />
+                              )}
                             </div>
                             <div>
                               <p className="font-base text-foreground">
-                                {mySubmission.status === "submitted" && "Turned in"}
-                                {mySubmission.status === "draft" && "Draft saved"}
-                                {mySubmission.status === "graded" && `Graded: ${mySubmission.pointsEarned}/${assignment.totalPoints} points`}
+                                {mySubmission.status === "submitted" &&
+                                  "Turned in"}
+                                {mySubmission.status === "draft" &&
+                                  "Draft saved"}
+                                {mySubmission.status === "graded" &&
+                                  `Graded: ${mySubmission.pointsEarned}/${assignment.totalPoints} points`}
                                 {mySubmission.isLate && " (Late)"}
                               </p>
                               <p className="text-sm text-foreground/60">
-                                {mySubmission.fileName} • {formatDistanceToNow(new Date(mySubmission.submittedAt), { addSuffix: true })}
+                                {mySubmission.fileName} •{" "}
+                                {formatDistanceToNow(
+                                  new Date(mySubmission.submittedAt),
+                                  { addSuffix: true }
+                                )}
                               </p>
                             </div>
                           </div>
@@ -525,7 +680,9 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
                             onClick={() => setSubmissionModalOpen(true)}
                           >
                             <Upload size={16} />
-                            {mySubmission.status === "draft" ? "Complete Submission" : "Resubmit"}
+                            {mySubmission.status === "draft"
+                              ? "Complete Submission"
+                              : "Resubmit"}
                           </Button>
                         )}
                       </div>
@@ -539,7 +696,11 @@ export default function AssignmentPage({ params }: AssignmentPageProps) {
                         Turn in Assignment
                       </Button>
                     )}
-                    <Button variant="outline" className="w-full justify-start" size="sm">
+                    <Button
+                      variant="outline"
+                      className="w-full justify-start"
+                      size="sm"
+                    >
                       <MessageSquare size={16} />
                       Add Comment
                     </Button>

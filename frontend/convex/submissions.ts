@@ -1,7 +1,13 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { auth } from "./auth";
-import { getAuthenticatedMember, requireStudent, requireTeacher, requireOwnership } from "./permissions";
+import { internal } from "./_generated/api";
+import {
+  getAuthenticatedMember,
+  requireStudent,
+  requireTeacher,
+  requireOwnership,
+} from "./permissions";
 
 // Get submissions for a student
 export const getStudentSubmissions = query({
@@ -55,7 +61,10 @@ export const getSubmission = query({
       throw new Error("Submission not found");
     }
 
-    const { userId, role } = await getAuthenticatedMember(ctx, submission.classroomId);
+    const { userId, role } = await getAuthenticatedMember(
+      ctx,
+      submission.classroomId
+    );
 
     // Students can only see their own submissions
     if (role === "student" && submission.studentId !== userId) {
@@ -73,18 +82,22 @@ export const getSubmission = query({
 
     return {
       ...submission,
-      assignment: assignment ? {
-        _id: assignment._id,
-        title: assignment.title,
-        description: assignment.description,
-        totalPoints: assignment.totalPoints,
-        dueDate: assignment.dueDate,
-      } : null,
-      student: student ? {
-        _id: student._id,
-        name: student.name,
-        email: student.email,
-      } : null,
+      assignment: assignment
+        ? {
+            _id: assignment._id,
+            title: assignment.title,
+            description: assignment.description,
+            totalPoints: assignment.totalPoints,
+            dueDate: assignment.dueDate,
+          }
+        : null,
+      student: student
+        ? {
+            _id: student._id,
+            name: student.name,
+            email: student.email,
+          }
+        : null,
       aiAnalysis,
     };
   },
@@ -162,6 +175,40 @@ export const submitAssignment = mutation({
         gradedAt: undefined,
       });
 
+      // Trigger AI grading - check for solution file
+      try {
+        // Get full assignment data to check for solution file
+        const fullAssignment = await ctx.db.get(args.assignmentId);
+        if (fullAssignment && fullAssignment.solutionFileId) {
+          console.log(
+            `Triggering AI grading for submission ${existingSubmission._id}`
+          );
+
+          // Schedule grading trigger (non-blocking)
+          await ctx.scheduler.runAfter(
+            0,
+            internal.grading.triggerGradingInternal,
+            {
+              submissionId: existingSubmission._id,
+            }
+          );
+
+          console.log(
+            `AI grading scheduled for submission ${existingSubmission._id}`
+          );
+        } else {
+          console.log(
+            `No solution file for assignment ${args.assignmentId}, skipping AI grading`
+          );
+        }
+      } catch (error) {
+        console.error(
+          `Error scheduling AI grading for submission ${existingSubmission._id}:`,
+          error
+        );
+        // Don't throw - submission should succeed even if grading scheduling fails
+      }
+
       return existingSubmission._id;
     } else {
       // Create new submission
@@ -177,6 +224,40 @@ export const submitAssignment = mutation({
         attemptNumber,
         status: "submitted",
       });
+
+      // Trigger AI grading - check for solution file
+      try {
+        // Get full assignment data to check for solution file
+        const fullAssignment = await ctx.db.get(args.assignmentId);
+        if (fullAssignment && fullAssignment.solutionFileId) {
+          console.log(
+            `Triggering AI grading for new submission ${submissionId}`
+          );
+
+          // Schedule grading trigger (non-blocking)
+          await ctx.scheduler.runAfter(
+            0,
+            internal.grading.triggerGradingInternal,
+            {
+              submissionId,
+            }
+          );
+
+          console.log(
+            `AI grading scheduled for new submission ${submissionId}`
+          );
+        } else {
+          console.log(
+            `No solution file for assignment ${args.assignmentId}, skipping AI grading`
+          );
+        }
+      } catch (error) {
+        console.error(
+          `Error scheduling AI grading for submission ${submissionId}:`,
+          error
+        );
+        // Don't throw - submission should succeed even if grading scheduling fails
+      }
 
       return submissionId;
     }
@@ -406,7 +487,10 @@ export const getSubmissionFileUrl = query({
       throw new Error("Submission not found");
     }
 
-    const { userId, role } = await getAuthenticatedMember(ctx, submission.classroomId);
+    const { userId, role } = await getAuthenticatedMember(
+      ctx,
+      submission.classroomId
+    );
 
     // Students can only access their own submissions
     if (role === "student" && submission.studentId !== userId) {
